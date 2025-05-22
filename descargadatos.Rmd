@@ -1,0 +1,116 @@
+---
+title: "datos.cuencas"
+author: "Andrey"
+date: "2025-05-21"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Descargar las librerías necesarias
+```{r}
+library(RNCEP)
+library(ncdf4)
+library(raster)
+library(weathermetrics)
+library(sf)
+library(chirps)
+library(dplyr)
+library(lubridate)
+library(writexl)
+library(ggplot2)
+library(readr)
+library(tidyverse)
+library(tidyr)
+library(readxl)
+```
+
+## Importar y Graficar Shape
+```{r}
+#Para modificar el código cambie la ruta y los nombre de los archivos
+
+shape <- st_read("C:\\Users\\andre\\OneDrive\\Escritorio\\UCR-TEC\\2025\\Primer Semestre 2025\\Herramientas de Ciencia de Datos II\\Proyecto Individual\\Cuenca_Brujo\\cuenca_brujo.shp")
+```
+```{r}
+cuenca <- st_set_crs(shape, 5367)
+```
+
+
+```{r}
+shape_transf <- st_transform(cuenca, crs = 4236)
+bbox <- st_bbox(shape_transf)
+lat_range <- c(bbox["ymin"], bbox["ymax"])
+lon_range <- c(bbox["xmin"], bbox["xmax"])
+```
+
+```{r}
+print(lat_range)
+print(lon_range)
+```
+```{r}
+plot(st_geometry(shape), axes = T)
+```
+## Creación de forma general de las fechas
+
+```{r}
+lonlat <- data.frame(lon_range, lat_range)
+
+date_ranges <- list(
+    c("1983-01-01", "1983-06-01"),
+  c("1983-06-01", "1983-12-31"),
+  c("1984-01-01", "1984-06-01"),
+  c("1984-06-01", "1984-12-31"),
+  c("1985-01-01", "1985-06-01"),
+  c("1985-06-02", "1985-12-31"),  
+  c("1986-01-01", "1986-06-01"),
+  c("1986-06-02", "1986-12-31"),
+  c("1987-01-01", "1987-06-01"),
+  c("1987-06-02", "1987-12-31"), 
+  c("1988-01-01", "1988-06-01"),
+  c("1988-06-02", "1988-12-31"),
+  c("1989-01-01", "1989-06-01"),
+  c("1989-06-02", "1989-12-31"),
+  c("1990-01-01", "1990-06-01"),
+  c("1990-06-02", "1990-12-31"),
+  c("1991-01-01", "1991-06-01"),
+  c("1991-06-02", "1991-12-31"),
+  c("1992-01-01", "1992-06-01"),
+  c("1992-06-02", "1992-12-31"),
+  c("1993-01-01", "1993-06-01"),
+  c("1993-06-01", "1993-12-31")
+  )
+```
+
+
+## Descargar Datos de Temperatura
+
+```{r}
+temperature_list_car <- lapply(date_ranges, function(dates){
+  get_chirts(lonlat, dates, var = "Tmax", interval = "monthly")})
+```
+```{r}
+temperature <- do.call(rbind, temperature_list_car)
+temperature <- temperature[,-1] #Ver bien esto
+saveRDS(temperature, file = "temperatura_brujo.rds")
+```
+
+# Leer los datos para no tener que descargarlos más
+
+```{r}
+temperature <- readRDS("temperatura_brujo.rds")
+```
+
+
+
+
+
+
+
+
+
+
+
+
