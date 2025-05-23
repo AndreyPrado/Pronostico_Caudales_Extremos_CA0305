@@ -1,6 +1,9 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 from BaseDatos import BaseDatos
+from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.tsa.seasonal import STL
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 
 class Grafico(BaseDatos):
     
@@ -60,7 +63,7 @@ class Grafico(BaseDatos):
         return fig
     
     #Método para hacer un gráfico de líneas
-    def linea(self, col = None):
+    def linea(self, nombre_fechas :str, col :str):
         ''' Genera un gráfico de líneas para columnas numéricas.
 
             Parámetros
@@ -74,18 +77,44 @@ class Grafico(BaseDatos):
                 Figura con el gráfico generado.
         '''
         df = self._datos
-        
-        if col is None:
-            col = df.select_dtypes(include=["number"]).columns.tolist()
             
-        fig, ax = plt.subplots(figsize=(10,5))
-        sns.lineplot(data=df[col], ax=ax)
-        ax.set_title("Gráfico de Líneas")
-        plt.tight_layout()
+        años_unicos = []
+        posicion = []
+        actual = None
+        
+        for i, fecha in enumerate(df[nombre_fechas]):
+            año = fecha.strftime("%Y")
+            if año != actual:
+                años_unicos.append(año)
+                posicion.append(i)
+                actual = año
+            
+        fig, ax = plt.subplots(figsize = (12,6))
+        ax.plot(
+            range(len(df)), 
+            df[col],
+            marker = "o",
+            markersize = 2,
+            markeredgewidth = 2,
+            linestyle = "-",
+            linewidth = 1,
+            color = "b",
+            label = col
+        )
+        if len(años_unicos) > 1:
+            ax.set_xticks(posicion)
+            ax.set_xticklabels(años_unicos, rotation = 45, ha="center")
+        else:
+            ax.tick_params(axis = 'x', rotation = 45)
+    
+        ax.set_xlabel("Fecha")
+        ax.set_ylabel(f"{col}")
+        ax.set_title(f"Serie de tiempo de la variable {col}")
+        ax.grid(False)
         
         self.__grafico = fig
         
-        return fig
+        return self.__grafico
     
     #Método para hacer un heatmap
     def heatmap(self):
@@ -165,3 +194,51 @@ class Grafico(BaseDatos):
             self.__grafico.savefig(nombre+".png")
         
         return f"Gráfico guardado como {nombre}.png"
+    
+    def descomposicion(self, tipo : str, nombre : str):
+        '''Descompone la serie en sus componentes (Residuos, Estacionalidad, Tendencia y la Original)
+
+        Parámetros
+        ----------
+        tipo : str
+            Tipo de descomposición ("STL", "aditive", "multiplicative")
+        nombre : str
+            Nombre de la columna que se quiere graficar
+
+        Retorna
+        -------
+        descomposicion : matplotlib
+            Resultado de la descomposición
+        '''
+        
+        if tipo == "STL":
+            #Se asume frecuencia mensual de la serie de tiempo
+            stl = STL(self._datos[nombre], period=12, robust=True)
+            descomposicion = stl.fit()
+
+            #Genera los 4 gráficos
+            fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 8), sharex=True)
+            
+            ax1.plot(self._datos[nombre],label='Original', color='black')
+            ax1.set_title("Original")
+            
+            ax2.plot(descomposicion.trend, label='Tendencia', color='blue')
+            ax2.set_title("Tendencia")
+            
+            ax3.plot(descomposicion.seasonal, label='Estacionalidad', color='green')
+            ax3.set_title("Estacionalidad")
+            
+            ax4.plot(descomposicion.resid, label='Residuos', color='red', linestyle='--')
+            ax4.set_title("Residuos")
+            
+            plt.tight_layout()
+            
+            self.__grafico = fig
+            
+        else:
+            #Se asume frecuencia mensual de la serie de tiempo
+            descomposicion = seasonal_decompose(self._datos[nombre], model = tipo, period = 12)
+            descomposicion.plot()
+            self.__grafico = fig
+            
+        return descomposicion

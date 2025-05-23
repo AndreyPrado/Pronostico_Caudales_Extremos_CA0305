@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit
 from Grafico import Grafico
 
@@ -115,7 +116,7 @@ class Modelo(Grafico):
             X_train, X_test, Y_train, Y_test
                 Tuplas con los conjuntos de entrenamiento y prueba
         '''
-        X = self._datos.drop(columns = x)
+        X = self._datos.drop(x, axis = 1)
         Y = self._datos[y]
         
         tss = TimeSeriesSplit(n_splits = 5)
@@ -177,5 +178,17 @@ class Modelo(Grafico):
         nombre_final = nombre+"_lag_"+str(cantidad)
         self._datos[nombre_final] = self._datos[nombre].shift(cantidad)
         
+        self._datos = self._datos.bfill()
+        
         return self._datos
+    
+    #Método para usar fechas
+    def fechas(self, nombre_col : str):
+        
+        self._datos[nombre_col] = pd.to_datetime(self._datos[nombre_col])
+        self._datos['ano'] = self._datos[nombre_col].dt.year
+        self._datos['mes'] = self._datos[nombre_col].dt.month
+        self._datos = self._datos.drop(columns = [nombre_col])
+        
+        
         

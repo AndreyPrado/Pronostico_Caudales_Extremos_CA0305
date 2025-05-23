@@ -100,7 +100,7 @@ class BaseDatos():
         return f"Base de Datos de dimensiones {self.tamano} \ny valores {self.datos}"
     
     #Método Para Descargar Pandas.DataFrame en CSV
-    def descargar_csv(self, nombre: str):
+    def descargar_excel(self, nombre: str):
         ''' Método para descargar la base de datos en formato csv
         Parámetros
         ----------
@@ -111,8 +111,8 @@ class BaseDatos():
         -------
         
         '''
-        cadena = nombre+".csv"
-        self._datos.to_csv(cadena)
-        return f"Archivo {nombre}.csv descargado con éxito"
+        cadena = nombre+".xlsx"
+        self._datos.to_excel(cadena)
+        return f"Archivo {nombre}.xlsx descargado con éxito"
         
     

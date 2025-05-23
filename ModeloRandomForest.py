@@ -7,24 +7,52 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, mean_absolu
 import matplotlib.pyplot as plt
 import seaborn as sns
 from Modelo import Modelo as Modelo
+from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import TimeSeriesSplit
 
 class ModeloRandomForest(Modelo):
     def __init__(self, url, target_column, col_ignore):
         super().__init__(url)
         self.__target_column = target_column
         self.__col_ignore = col_ignore
-        self.__model = RandomForestRegressor(n_estimators=100, random_state=42)
-
-
+        self.__model = None
+        self.__best = None
 
     #Getters y Setters 
-
+    def modelo(self):
+        return self.__modelo
     
-    def ajustar_modelo(self):
-
+    def modelo(self, new):
+        self.__modelo = new
+        
+        
+    def crear_y_ajustar_modelo(self):
+        
+        self.__model = RandomForestRegressor(random_state = 42)
+        
         self._X_train, self._X_test, self._Y_train, self._Y_test = self.cargar_datos(
-            x=[self.__col_ignore], y=[self.__target_column])
-        self.__model.fit(self._X_train, self._Y_train)
+            x=self.__col_ignore, y=self.__target_column)
+        
+        grid = {
+            'n_estimators': [100,300,500,700,1000],
+            'max_depth': [10,15,20,25,30, None],
+            'max_features': ['auto', 'sqrt', 'log2'],
+            'min_samples_split': [2,5,10]
+            }
+        
+        tscv = TimeSeriesSplit(n_splits=5)
+        
+        grid_search = GridSearchCV(estimator = self.__model, param_grid = grid,
+                                   cv=tscv, n_jobs=-1, scoring='neg_mean_squared_error',
+                                   verbose=1)
+        
+        grid_search.fit(self._X_train, self._Y_train)
+        
+        print('Mejores parámetros', grid_search.best_params_)
+        print('Mejor RMSE', np.sqrt(-grid_search.best_score_))
+        
+        self.__model = grid_search.best_estimator_
+        
 
     def evaluar_modelo(self):
         # Puntaje R2
@@ -35,8 +63,9 @@ class ModeloRandomForest(Modelo):
         print(f"R² (test): {r2_test:.4f}")
     
         # Validación cruzada
-        scores = cross_val_score(self.__model, self._X_train, self._Y_train, cv=5, scoring='r2')
-        print(f"R² promedio (CV): {scores.mean():.4f}")
+        tscv = TimeSeriesSplit(n_splits=5)
+        cv_scores = cross_val_score(self.__model, self._X_train, self._Y_train, cv=tscv, scoring = 'r2')
+        print(f"R² promedio (CV): {cv_scores.mean():.4f}")
     
         # Predicciones
         self.__y_pred = self.__model.predict(self._X_test)
@@ -60,51 +89,86 @@ class ModeloRandomForest(Modelo):
         - MAPE (Error Porcentual Absoluto Medio): {mape:.2f}%
         - NSE (Eficiencia Nash–Sutcliffe): {nse:.4f}
         """)
+        
+    def graficar_predicciones(self):
+        
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.plot(self._Y_test.values, label='Valores reales', linewidth=2)
+        ax.plot(self.__y_pred, label='Predicciones', linewidth=2, linestyle='--')
+        ax.set_title('Comparación de Predicciones vs Valores Reales')
+        ax.set_xlabel('Observaciones')
+        ax.set_ylabel('Valor')
+        ax.legend()
+        ax.grid(True)
+        fig.tight_layout()
+        
+        self.__grafico = fig
+        
+        return self.__grafico
 
     def visualizar_resultados(self):
 
-        plt.figure(figsize=(10, 6))
-        sns.scatterplot(x=self._Y_test.values.ravel(), y=self.__y_pred.ravel(), alpha = 0.6)
-        plt.plot([self._Y_test.min(), self._Y_test.max()], [self._Y_test.min(), self._Y_test.max()], 'r--')  # Línea de perfecta predicción
-        plt.title('Valores Reales vs Predicciones')
-        plt.xlabel('Valores Reales')
-        plt.ylabel('Predicciones')
-        plt.grid(True)
-        plt.show()
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.scatterplot(x=self._Y_test.values.ravel(), y=self.__y_pred.ravel(), alpha=0.6, ax=ax)
+        ax.plot([self._Y_test.min(), self._Y_test.max()], [self._Y_test.min(), self._Y_test.max()], 'r--')
+        ax.set_title('Valores Reales vs Predicciones')
+        ax.set_xlabel('Valores Reales')
+        ax.set_ylabel('Predicciones')
+        ax.grid(True)
+        
+        self.__grafico = fig
+        
+        return self.__grafico
+    
         
     def importancia_feature(self, top_n = 10):
         importances = self.__model.feature_importances_
         feature_names = self._X_train.columns
-        
         df_impor = pd.DataFrame({
-            'feature' : feature_names,
-            'importancia' : importances
-            }).sort_values(by='importancia', ascending = False)
-        
+            'feature': feature_names,
+            'importancia': importances
+        }).sort_values(by='importancia', ascending=False)
+    
         print(df_impor.head(top_n))
-        plt.figure(figsize=(10,6))
-        sns.barplot( x = 'importancia', y='feature', data = df_impor.head(top_n), palette = 'viridis')
-        plt.title('Importancia de las Variables del Modelo Random Forest')
-        plt.tight_layout()
-        plt.show()
+    
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.barplot(x='importancia', y='feature', data=df_impor.head(top_n), palette='viridis', ax=ax)
+        ax.set_title('Importancia de las Variables del Modelo Random Forest')
+        fig.tight_layout()
+    
+        self.__grafico = fig
         
-    def importancia_permutacion(self, top_n = 10):
+        return self.__grafico
+            
+    def importancia_permutacion(self, nombre : str, top_n = 10 ):
         feature_names = self._X_train.columns
-        
-        resultados = permutation_importance(self.__model,self._X_test, self._Y_test, n_repeats=10,random_state=42)
+        resultados = permutation_importance(self.__model, self._X_test, self._Y_test, n_repeats=10, random_state=42)
         df_permu = pd.DataFrame({
-            'feature' : feature_names,
-            'media_importancia' : resultados.importances_mean,
-            'sd_importancia' : resultados.importances_std 
-            }).sort_values(by = 'media_importancia', ascending=False)
-        
+            'feature': feature_names,
+            'media_importancia': resultados.importances_mean,
+            'sd_importancia': resultados.importances_std
+        }).sort_values(by='media_importancia', ascending=False)
+    
         print(df_permu.head(top_n))
         
-        plt.figure(figsize=(10,6))
-        sns.barplot(x='media_importancia', y='feature', data = df_permu.head(top_n), palette = 'viridis')
-        plt.title('Importancia de las variables del Modelo Random Forest por Permutación')
-        plt.tight_layout()
-        plt.show()
+        if nombre == "media":
+            # Media
+            fig1, ax1 = plt.subplots(figsize=(10, 6))
+            sns.barplot(x='media_importancia', y='feature', data=df_permu.head(top_n).sort_values(by='media_importancia'), palette='viridis', ax=ax1)
+            ax1.set_title('Importancia de las variables por Permutación (Media)')
+            fig1.tight_layout()
+            
+            self.__grafico = fig1
         
+        if nombre == "sd":
+            # Desviación estándar
+            fig2, ax2 = plt.subplots(figsize=(10, 6))
+            sns.barplot(x='sd_importancia', y='feature', data=df_permu.head(top_n).sort_values(by='media_importancia'), palette='viridis', ax=ax2)
+            ax2.set_title('Importancia de las variables por Permutación (Desviación Est.)')
+            fig2.tight_layout()
+            
+            self.__grafico = fig2
+            
+        return self.__grafico
         
         

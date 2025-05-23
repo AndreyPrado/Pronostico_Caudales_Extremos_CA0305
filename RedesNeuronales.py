@@ -2,13 +2,16 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from Modelo import Modelo
 from Grafico import Grafico
 import shap
 from sklearn.inspection import permutation_importance
 from scikeras.wrappers import KerasRegressor
+from sklearn.model_selection import GridSearchCV
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard, CSVLogger
+
 
 class RedesNeuronales(Modelo, Grafico):
     
@@ -31,8 +34,8 @@ class RedesNeuronales(Modelo, Grafico):
         self.__predicciones = None
         self.__x_escalado = None
         self.__y_escalado = None
-        self.__scaler_X = MinMaxScaler()
-        self.__scaler_y = MinMaxScaler()
+        self.__scaler_X = StandardScaler()
+        self.__scaler_y = StandardScaler()
         self.__metricas = {}
         
     #Getters
@@ -123,18 +126,25 @@ class RedesNeuronales(Modelo, Grafico):
                 Tupla con (X_escalado, y_escalado)
         '''
 
-        # Extraer X e y
-        X = self.datos[variables_x]
-        y = self.datos[variable_y]
+        
+        
+        self._X_train, self._X_test, self._Y_train, self._Y_test = self.cargar_datos(
+            x=variables_x, y=variable_y)
+        
         
         # Escalar los datos
-        self.__x_escalado = self.__scaler_X.fit_transform(X)
-        self.__y_escalado = self.__scaler_y.fit_transform(y.values.reshape(-1, 1))
+        self.__x_train_escalado = self.__scaler_X.fit_transform(self._X_train)
+        self.__x_test_escalado = self.__scaler_X.transform(self._X_test)
+        self.__y_train_escalado = self.__scaler_y.fit_transform(self._Y_train.values.reshape(-1, 1))
+        self.__y_test_escalado = self.__scaler_y.transform(self._Y_test.values.reshape(-1, 1))
         
-        return self.__x_escalado, self.__y_escalado
+        
+        self.__variables_x =self._X_train.columns.tolist()
+        
+        return self.__x_train_escalado, self.__x_test_escalado, self.__y_train_escalado, self.__y_test_escalado, self._X_train, self._X_test, self._Y_train, self._Y_test
     
     #Método para crear la arquitectura de la red neuronal
-    def crear_modelo(self, capas, learning_rate=0.1, funcion_perdida="mean_squared_error"):
+    def crear_modelo(self, capas, learning_rate=0.001, funcion_perdida="mean_squared_error"):
         ''' Crea la arquitectura de la red neuronal.
     
             Parámetros
@@ -156,9 +166,8 @@ class RedesNeuronales(Modelo, Grafico):
         
         # Construir modelo con las capas especificadas
         modelo = tf.keras.Sequential()
-        input_shape = self.__x_escalado.shape[1]
+        input_shape = self.__x_train_escalado.shape[1]
         
-        # Primera capa (debe especificar input_shape)
         neuronas, activacion = capas[0]
         modelo.add(tf.keras.layers.Dense(units=neuronas, input_shape=(input_shape,), activation=activacion))
                 
@@ -173,32 +182,17 @@ class RedesNeuronales(Modelo, Grafico):
         return modelo
         
     #Método para entrenar el modelo
-    def entrenar(self, epochs=1000, verbose=0, validation_split=0, callbacks=None):
-        ''' Entrena el modelo de red neuronal.
-    
-            Parámetros
-            ----------
-            epochs : int
-                Número de épocas de entrenamiento (default 1000)
-                
-            verbose : int
-                Valor asociado a como se imprime el proceso (0= Nulo, 1= Barra, 2= Número) (default = 0)
-                
-            validation_split : float
-                Porcentaje para validación (default 0)
-                
-            callbacks : list
-                Lista de callbacks a usar durante el entrenamiento
-            
-            Retorna
-            -------
-            tf.keras.History
-                Historial de entrenamiento
-        '''
+    def entrenar(self, epochs=1000, verbose=0, validation_split=0.2):
+
+        callbacks = [
+        EarlyStopping(monitor='val_loss', patience=100, restore_best_weights=True),
+        ModelCheckpoint('best_model.h5', monitor='val_loss', save_best_only=True),
+        ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=50, min_lr=1e-7)
+        ]
         print("Entrenando el modelo...")
         self.__historial = self.__modelo.fit(
-            self.__x_escalado, 
-            self.__y_escalado, 
+            self.__x_train_escalado, 
+            self.__y_train_escalado, 
             epochs=epochs, 
             verbose=verbose,
             validation_split=validation_split,
@@ -249,7 +243,7 @@ class RedesNeuronales(Modelo, Grafico):
                 Array con las predicciones
         '''
         # Hacer predicciones
-        predicciones_escaladas = self.__modelo.predict(self.__x_escalado)
+        predicciones_escaladas = self.__modelo.predict(self.__x_test_escalado)
         
         # Revertir el escalado
         self.__predicciones = self.__scaler_y.inverse_transform(predicciones_escaladas).flatten()
@@ -260,7 +254,7 @@ class RedesNeuronales(Modelo, Grafico):
         return self.__predicciones
     
     #Método para evaluar el modelo
-    def evaluar_modelo(self, y_real):
+    def evaluar_modelo(self):
         ''' Evalúa el modelo calculando métricas de rendimiento.
     
             Parámetros
@@ -274,13 +268,13 @@ class RedesNeuronales(Modelo, Grafico):
                 Diccionario con métricas (R², RMSE, MAE, NSE)
         '''
         # Calcular métricas
-        rmse = np.sqrt(mean_squared_error(y_real, self.__predicciones))
-        mae = mean_absolute_error(y_real, self.__predicciones)
-        r2 = r2_score(y_real, self.__predicciones)
+        rmse = np.sqrt(mean_squared_error(self._Y_test, self.__predicciones))
+        mae = mean_absolute_error(self._Y_test, self.__predicciones)
+        r2 = r2_score(self._Y_test, self.__predicciones)
     
         # Calcular NSE
-        nse_numerador = np.sum((y_real - self.__predicciones) ** 2)
-        nse_denominador = np.sum((y_real - np.mean(y_real)) ** 2)
+        nse_numerador = np.sum((self._Y_test - self.__predicciones) ** 2)
+        nse_denominador = np.sum((self._Y_test - np.mean(self._Y_test)) ** 2)
         nse = 1 - (nse_numerador / nse_denominador)
     
         # Guardar métricas
@@ -300,64 +294,21 @@ class RedesNeuronales(Modelo, Grafico):
         return self.__metricas
     
     #Método para graficar resultados
-    def graficar_resultados(self, columna_fecha, nombre_real, nombre_prediccion=None):
-        ''' Genera un gráfico comparando valores reales y predicciones.
-    
-            Parámetros
-            ----------
-            columna_fecha : str
-                Nombre de la columna con fechas
-                
-            nombre_real : str
-                Nombre de la columna con valores reales
-                
-            nombre_prediccion : str
-                Nombre para mostrar en la leyenda (default 'Predicción')
-            
-            Retorna
-            -------
-            matplotlib.figure.Figure
-                Figura con el gráfico generado
-        '''
-        
-        if nombre_prediccion is None:
-            nombre_prediccion = 'Predicción'
-        
-        # Preparar los datos
-        df_resultado = pd.DataFrame({
-            'Fecha': self.datos[columna_fecha],
-            'Real': self.datos[nombre_real],
-            nombre_prediccion: self.__predicciones
-        })
-        
-        # Agrupar por fecha si hay duplicados
-        df_resultado = df_resultado.groupby('Fecha').mean().reset_index()
-        
-        # Convertir a datetime si no lo es
-        if not pd.api.types.is_datetime64_any_dtype(df_resultado['Fecha']):
-            df_resultado['Fecha'] = pd.to_datetime(df_resultado['Fecha'])
-        
-        # Crear gráfico
+    def graficar_resultados(self, nombre_fecha):
+
         fig, ax = plt.subplots(figsize=(12, 6))
-        ax.plot(df_resultado['Fecha'], df_resultado['Real'], label='Datos reales', color='blue')
-        ax.plot(df_resultado['Fecha'], df_resultado[nombre_prediccion], 
-                label=nombre_prediccion, color='orange', linestyle='dashed')
-        
-        # Configurar eje X para fechas
-        if len(df_resultado) > 60:
-            # Si hay muchas fechas, mostrar cada 30 días aprox.
-            interval = max(1, len(df_resultado) // 12)
-            plt.xticks(df_resultado['Fecha'][::interval], 
-                       [d.strftime('%b %Y') for d in df_resultado['Fecha'][::interval]])
-        
-        ax.set_title(f'Comparación entre valores reales y {nombre_prediccion.lower()}')
-        ax.set_xlabel('Fecha')
-        ax.set_ylabel(nombre_real)
+        ax.plot(self._Y_test.values, label='Valores reales', linewidth=2)
+        ax.plot(self.__predicciones, label='Predicciones', linewidth=2, linestyle='--')
+        ax.set_title('Comparación de Predicciones vs Valores Reales')
+        ax.set_xlabel('Observaciones')
+        ax.set_ylabel('Valor')
         ax.legend()
         ax.grid(True)
+        fig.tight_layout()
         
-        self._Grafico__grafico = fig  # Acceso al atributo privado de la clase Grafico
-        return fig
+        self.__grafico = fig
+        
+        return self.__grafico
     
     #Método para guardar el modelo
     def guardar_modelo(self, nombre):
@@ -396,29 +347,30 @@ class RedesNeuronales(Modelo, Grafico):
         return self.__modelo
     
     def importancia_shap(self):
-        explainer = shap.Explainer(self.__modelo, self.__x_escalado)
-        shap_values = explainer(self.__x_escalado)
-        shap.summary_plot(shap_values, features = self.__x_escalado, feature_names = self.datos.columns)
+        explainer = shap.Explainer(self.__modelo, self.__x_train_escalado)
+        shap_values = explainer(self.__x_train_escalado)
+        shap.summary_plot(shap_values, features = self.__x_train_escalado, feature_names = self.__variables_x)
         
     def importancia_permu(self):
         model = KerasRegressor(build_fn = lambda: self.__modelo, epochs=0, verbose=0)
-        model.fit(self.__x_escalado, self.__y_escalado)
-        resultados = permutation_importance(model, self.__x_escalado, self.__y_escalado, n_repeats=10, random_state=42 )
+        model.fit(self.__x_train_escalado, self.__y_train_escalado)
+        resultados = permutation_importance(model, self.__x_train_escalado, self.__y_train_escalado, n_repeats=10, random_state=42 )
         sorted_idx = resultados.importances_mean.argsort()
         plt.barh(range(len(sorted_idx)), resultados.importances_mean[sorted_idx])
-        plt.yticks(range(len(sorted_idx)), np.array(self.datos.columns)[sorted_idx])
+        plt.yticks(range(len(sorted_idx)), np.array(self.__variables_x)[sorted_idx])
         plt.xlabel("Importancia del Modelo de Redes Neuronales con Permutación")
         plt.show()
         
     def importancia_grad(self):
-        x_tensor = tf.convert_to_tensor(self.__x_escalado, dtype=tf.float32)
+        x_tensor = tf.convert_to_tensor(self.__x_train_escalado, dtype=tf.float32)
         with tf.GradientTape() as tape:
             tape.watch(x_tensor)
             predicciones = self.__modelo(x_tensor)
         grad = tape.gradient(predicciones, x_tensor)
         importancia = np.mean(np.abs(grad.numpy()), axis = 0)
+        
         plt.barh(range(len(importancia)), importancia)
-        plt.yticks(range(len(importancia)), self.datos.columns)
-        plt.xlabel('IMportancia del Modelo de Redes Neuronales con Gradientes')
+        plt.yticks(range(len(importancia)), self.__variables_x[:x_tensor.shape[1]])
+        plt.xlabel('Importancia del Modelo de Redes Neuronales con Gradientes')
         plt.show()
         
